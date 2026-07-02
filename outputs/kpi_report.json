@@ -1,0 +1,13 @@
+{
+  "n_days": 248,
+  "annualized_return": 1.0465067389195426,
+  "annualized_vol": 0.16571410597905395,
+  "sharpe_ratio": 6.315133722242208,
+  "max_drawdown": -0.07404895776673197,
+  "avg_daily_turnover": 2.2418343143303066,
+  "total_costs": 0.27819175369871174,
+  "final_cum_pnl": 1.0298955208414544,
+  "mean_ic": 0.15134962800745755,
+  "latest_rolling_ic": 0.20104937402915352,
+  "signal_decay_alert": false
+}

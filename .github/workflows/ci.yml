@@ -1,0 +1,53 @@
+name: RFGD Pipeline CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 11 * * 1-5'  # nightly on weekdays, pre-US-open UTC
+  workflow_dispatch: {}
+
+jobs:
+  test-and-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Run unit tests (100% path coverage target)
+        run: uv run --with pytest --with pytest-cov pytest tests/ -q
+
+      - name: Run nightly monitoring cycle (KPI + signal-decay artifact)
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python -c "
+          import pandas as pd, numpy as np
+          from retail_gamma import monitoring
+          dates = pd.date_range(end=pd.Timestamp.today(), periods=90, freq='B')
+          rng = np.random.default_rng(0)
+          df = pd.DataFrame({'gross_pnl': rng.normal(0.0004, 0.006, 90),
+                              'costs': np.abs(rng.normal(0.0001, 0.00005, 90)),
+                              'turnover': rng.uniform(0.05, 0.25, 90)}, index=dates)
+          df['net_pnl'] = df['gross_pnl'] - df['costs']
+          ic = pd.Series(rng.normal(0.03, 0.05, 90))
+          report = monitoring.run_monitoring_cycle(df, ic_series=ic, output_dir='outputs')
+          print(report)
+          "
+
+      - name: Upload KPI / signal-decay artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfgd-kpi-report
+          path: outputs/
+          retention-days: 90
