@@ -19,10 +19,12 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Set up Python 3.13
-        run: uv python install 3.13
+        #run: uv python install 3.13
+        run: uv python pin 3.13
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        #run: uv pip install --system -e ".[dev]"
+        run: uv pip install -e ".[dev]"
 
       - name: Run unit tests (100% path coverage target)
         run: uv run --with pytest --with pytest-cov pytest tests/ -q
@@ -30,8 +32,22 @@ jobs:
       - name: Run nightly monitoring cycle (KPI + signal-decay artifact)
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        # run: |
+        #   python -c "
+        #   import pandas as pd, numpy as np
+        #   from retail_gamma import monitoring
+        #   dates = pd.date_range(end=pd.Timestamp.today(), periods=90, freq='B')
+        #   rng = np.random.default_rng(0)
+        #   df = pd.DataFrame({'gross_pnl': rng.normal(0.0004, 0.006, 90),
+        #                       'costs': np.abs(rng.normal(0.0001, 0.00005, 90)),
+        #                       'turnover': rng.uniform(0.05, 0.25, 90)}, index=dates)
+        #   df['net_pnl'] = df['gross_pnl'] - df['costs']
+        #   ic = pd.Series(rng.normal(0.03, 0.05, 90))
+        #   report = monitoring.run_monitoring_cycle(df, ic_series=ic, output_dir='outputs')
+        #   print(report)
+        #   "
         run: |
-          python -c "
+          uv run python -c "
           import pandas as pd, numpy as np
           from retail_gamma import monitoring
           dates = pd.date_range(end=pd.Timestamp.today(), periods=90, freq='B')
