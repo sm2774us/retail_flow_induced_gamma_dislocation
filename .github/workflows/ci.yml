@@ -1,8 +1,7 @@
 name: RFGD Pipeline CI
 
 on:
-  push:
-    branches: [main]
+  push: # Runs on every single branch push automatically
   pull_request:
     branches: [main]
   schedule:
@@ -27,7 +26,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run unit tests (100% path coverage target)
-        run: uv run --with pytest --with pytest-cov pytest tests/ -q
+        run: uv run --with pytest --with pytest-cov --with plotly --with kaleido --with scipy --with scikit-learn --with yfinance pytest tests/ -q
 
       - name: Run nightly monitoring cycle (KPI + signal-decay artifact)
         env:
