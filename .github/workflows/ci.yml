@@ -1,8 +1,7 @@
 name: RFGD Pipeline CI
 
 on:
-  push:
-    branches: [main]
+  push: # Runs on every single branch push automatically
   pull_request:
     branches: [main]
   schedule:
