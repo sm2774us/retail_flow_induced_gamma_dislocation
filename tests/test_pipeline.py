@@ -471,6 +471,21 @@ def test_get_default_adapter_prefer_live_no_network():
     assert adapter is not None
 
 
+def test_get_default_flow_adapter_returns_synthetic_and_works():
+    flow_adapter = da.get_default_flow_adapter(seed=99)
+    assert isinstance(flow_adapter, da.SyntheticDataAdapter)
+    df = flow_adapter.get_option_flow_proxy(["AAPL"], "2024-01-01", "2024-02-01")
+    assert not df.empty
+
+
+def test_yfinance_adapter_flow_never_called_via_default_flow_adapter():
+    # Regression guard: get_default_flow_adapter must never return an adapter
+    # whose get_option_flow_proxy raises NotImplementedError.
+    flow_adapter = da.get_default_flow_adapter()
+    result = flow_adapter.get_option_flow_proxy(["MSFT"], "2024-01-01", "2024-01-10")
+    assert not result.empty
+
+
 def test_market_data_adapter_protocol_conformance():
     adapter = da.SyntheticDataAdapter()
     assert isinstance(adapter, da.MarketDataAdapter)
@@ -531,6 +546,35 @@ def test_plot_risk_dashboard(tmp_path):
         "gross_exposure": np.random.default_rng(8).uniform(0.8, 1.2, 40),
     }, index=idx)
     fig, paths = viz.plot_risk_dashboard(df, tmp_path)
+    assert Path(paths["html"]).exists()
+    # Regression guard: the turnover panel must contain real, non-degenerate data
+    # (previously rendered via go.Bar, which collapses to an invisible panel over
+    # long daily histories -- now a filled-area line, verified here by trace type
+    # and by the presence of nonzero y-values).
+    turnover_traces = [t for t in fig.data if t.name in ("Turnover", "Turnover (20d MA)")]
+    assert len(turnover_traces) == 2
+    for t in turnover_traces:
+        assert t.type == "scatter"
+        assert np.nanmax(np.abs(np.asarray(t.y, dtype=float))) > 0
+
+
+def test_plot_risk_dashboard_large_history_turnover_visible(tmp_path):
+    # Simulate a multi-year daily history (the regime that broke go.Bar rendering)
+    # and assert the turnover trace still carries the full, non-empty data series.
+    idx = pd.date_range("2019-10-02", "2026-06-30", freq="B")
+    n = len(idx)
+    rng = np.random.default_rng(9)
+    df = pd.DataFrame({
+        "rolling_sharpe": rng.normal(1, 0.5, n),
+        "drawdown": -np.abs(rng.normal(0, 0.05, n)),
+        "turnover": rng.uniform(1.5, 3.0, n),
+        "gross_exposure": rng.uniform(0.5, 1.5, n),
+    }, index=idx)
+    fig, paths = viz.plot_risk_dashboard(df, tmp_path, name="risk_dashboard_large")
+    turnover_trace = next(t for t in fig.data if t.name == "Turnover")
+    y = np.asarray(turnover_trace.y, dtype=float)
+    assert len(y) == n
+    assert np.isclose(np.nanmean(y), df["turnover"].mean(), atol=1e-9)
     assert Path(paths["html"]).exists()
 
 

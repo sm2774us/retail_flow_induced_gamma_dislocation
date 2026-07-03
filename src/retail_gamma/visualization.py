@@ -131,7 +131,16 @@ def plot_signal_decay_ribbon(rolling_ic_by_period: pd.DataFrame, output_dir: str
 
 def plot_risk_dashboard(kpi_history: pd.DataFrame, output_dir: str | Path,
                          name: str = "risk_dashboard") -> tuple[go.Figure, dict]:
-    """4-panel institutional risk dashboard: Sharpe, drawdown, turnover, gross exposure."""
+    """4-panel institutional risk dashboard: Sharpe, drawdown, turnover, gross exposure.
+
+    NOTE on the turnover panel: with long daily histories (multi-year, thousands of
+    trading days) a `go.Bar` trace degenerates into sub-pixel-width bars that render
+    as an effectively blank panel in static (rasterized) PNG export, even though the
+    underlying data is non-empty -- each bar's rendered width falls below one pixel
+    and anti-aliasing washes the color out. We therefore render turnover as a filled
+    area line (matching the drawdown panel's proven-visible treatment) plus a light
+    trailing rolling-mean overlay, which remains legible at any history length.
+    """
     fig = make_subplots(rows=2, cols=2, subplot_titles=(
         "Rolling Sharpe (63d)", "Drawdown", "Daily Turnover", "Gross Exposure Utilization"))
 
@@ -140,8 +149,16 @@ def plot_risk_dashboard(kpi_history: pd.DataFrame, output_dir: str | Path,
     fig.add_trace(go.Scatter(x=kpi_history.index, y=kpi_history["drawdown"], fill="tozeroy",
                               line=dict(color=COLORWAY[1], width=1.5), name="Drawdown",
                               fillcolor="rgba(255,90,95,0.15)"), row=1, col=2)
-    fig.add_trace(go.Bar(x=kpi_history.index, y=kpi_history["turnover"],
-                          marker_color=COLORWAY[2], name="Turnover"), row=2, col=1)
+
+    turnover = kpi_history["turnover"]
+    fig.add_trace(go.Scatter(x=turnover.index, y=turnover.values, mode="lines",
+                              line=dict(color=COLORWAY[2], width=1.2), name="Turnover",
+                              fill="tozeroy", fillcolor="rgba(0,182,122,0.25)"), row=2, col=1)
+    turnover_ma = turnover.rolling(20, min_periods=1).mean()
+    fig.add_trace(go.Scatter(x=turnover_ma.index, y=turnover_ma.values, mode="lines",
+                              line=dict(color=COLORWAY[2], width=2, dash="solid"),
+                              name="Turnover (20d MA)"), row=2, col=1)
+
     fig.add_trace(go.Scatter(x=kpi_history.index, y=kpi_history["gross_exposure"],
                               line=dict(color=COLORWAY[4], width=2), name="Gross Exp"), row=2, col=2)
 
@@ -149,6 +166,8 @@ def plot_risk_dashboard(kpi_history: pd.DataFrame, output_dir: str | Path,
                        title=dict(text="RFGD Live Risk Dashboard", x=0.02, font=dict(size=18)),
                        margin=dict(l=50, r=30, t=90, b=40),
                        font=dict(family="Inter, Helvetica, Arial, sans-serif", size=12))
+    turnover_max = float(turnover.max()) if len(turnover) else 1.0
+    fig.update_yaxes(range=[0, max(turnover_max * 1.15, 1e-6)], row=2, col=1)
     return fig, _persist(fig, name, output_dir, height=650)
 
 

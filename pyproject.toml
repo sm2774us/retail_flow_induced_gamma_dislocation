@@ -11,7 +11,7 @@ dependencies = [
     "plotly>=5.22",
     "kaleido>=0.2.1",
     "yfinance>=0.2.40",
-    "ipykernel>=7.2.0",
+    "nbformat>=4.2.0",
 ]
 
 [project.optional-dependencies]

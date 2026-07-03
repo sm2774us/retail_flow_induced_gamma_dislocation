@@ -263,6 +263,12 @@ def get_default_adapter(prefer_live: bool = True) -> "MarketDataAdapter":
     SyntheticDataAdapter transparently if network egress to the vendor is
     unavailable (e.g. sandboxed research environment / CI runner without
     market-data network allowlisting). Logs which adapter is active.
+
+    NOTE: this factory selects an adapter for **equity OHLCV**. Free
+    `YFinanceAdapter` deliberately does NOT implement historical
+    `get_option_flow_proxy` (see class docstring) -- use
+    `get_default_flow_adapter()` for the options-flow leg instead of calling
+    `get_option_flow_proxy` on whatever this function returns.
     """
     if prefer_live:
         try:
@@ -273,3 +279,18 @@ def get_default_adapter(prefer_live: bool = True) -> "MarketDataAdapter":
         except Exception:
             pass
     return SyntheticDataAdapter()
+
+
+def get_default_flow_adapter(seed: int = 42,
+                              params: "SyntheticRegimeParams | None" = None) -> "MarketDataAdapter":
+    """Factory for the **options-flow** leg (call/put volume, OI, small-lot
+    breakdown). Free `YFinanceAdapter` has no historical single-name options
+    OI/volume-by-lot, and `OCCPublicDataAdapter` is an unimplemented
+    production stub, so this always returns the calibrated
+    `SyntheticDataAdapter` today. In production, replace the body of this
+    function with a licensed vendor adapter (OptionMetrics IvyDB, CBOE
+    DataShop, Bloomberg OMON) or a completed `OCCPublicDataAdapter` --
+    no other code needs to change since callers only depend on the
+    `MarketDataAdapter` protocol.
+    """
+    return SyntheticDataAdapter(seed=seed, params=params)

@@ -9,6 +9,19 @@
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{fancyhdr}
+\usepackage{microtype}
+\usepackage[htt]{hyphenat}
+
+% --- Border-creep / overfull-hbox prevention -------------------------------
+% microtype's font protrusion+expansion plus a relaxed emergency stretch
+% budget lets the justifier compress/expand glue instead of letting long
+% unbreakable runs (arrow chains, inline \texttt{} identifiers) spill past
+% the right text margin.
+\sloppy
+\tolerance=1200
+\emergencystretch=3em
+\hbadness=10000
+\setlength{\emergencystretch}{3em}
 
 \lstset{basicstyle=\ttfamily\small,breaklines=true,backgroundcolor=\color{gray!10}}
 \pagestyle{fancy}
@@ -109,7 +122,10 @@ range-bound --- the hedge-driven price impact is not immediately offset by mean-
 flow, producing a short-horizon \emph{momentum} signature rather than the typical
 liquidity-provision mean-reversion signature. This is the reflexive loop:
 \[
-\text{Call buying} \rightarrow \text{Dealer short gamma} \rightarrow \text{Dealer buys stock} \rightarrow \text{Price} \uparrow \rightarrow \text{More call buying (extrapolative retail demand)}.
+\begin{aligned}
+\text{Call buying} &\rightarrow \text{Dealer short gamma} \rightarrow \text{Dealer buys stock} \rightarrow \text{Price} \uparrow \\
+&\rightarrow \text{More call buying (extrapolative retail demand)}.
+\end{aligned}
 \]
 
 \section{Demand-Based Option Pricing and the Volatility Surface}
