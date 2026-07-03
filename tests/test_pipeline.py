@@ -1,5 +1,6 @@
 """Centralized 100%-path unit test suite for the RFGD pipeline."""
 import json
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
@@ -400,3 +401,215 @@ def test_run_monitoring_cycle_with_alert(tmp_path, monkeypatch):
     report = monitoring.run_monitoring_cycle(df, ic_series=ic, output_dir=tmp_path)
     assert "signal_decay_alert" in report
     assert report["slack_notified"] is False  # no webhook configured in test env
+
+
+# ---------------------------------------------------------------------------
+# data_adapter.py
+# ---------------------------------------------------------------------------
+from retail_gamma import data_adapter as da
+
+
+def test_synthetic_adapter_equity_ohlcv():
+    adapter = da.SyntheticDataAdapter(seed=1)
+    df = adapter.get_equity_ohlcv(["AAPL", "TSLA"], "2024-01-01", "2024-02-01")
+    assert set(df["ticker"].unique()) == {"AAPL", "TSLA"}
+    assert {"open", "high", "low", "close", "volume", "date"}.issubset(df.columns)
+    assert (df["close"] > 0).all()
+
+
+def test_synthetic_adapter_option_flow_proxy():
+    adapter = da.SyntheticDataAdapter(seed=2)
+    df = adapter.get_option_flow_proxy(["AAPL"], "2019-01-01", "2020-01-01")
+    assert {"call_volume", "call_oi", "small_lot_call_volume",
+            "put_volume", "put_oi", "small_lot_put_volume"}.issubset(df.columns)
+    assert (df["small_lot_call_volume"] <= df["call_volume"] + 1e-6).all()
+
+
+def test_synthetic_adapter_regime_shift_present():
+    adapter = da.SyntheticDataAdapter(seed=3)
+    df = adapter.get_option_flow_proxy(["AAPL"], "2019-06-01", "2020-01-01")
+    pre = df[df["date"] < pd.Timestamp("2019-10-02")]["_signal_strength"].mean()
+    post = df[df["date"] >= pd.Timestamp("2019-10-02")]["_signal_strength"].mean()
+    assert post > pre
+
+
+def test_yfinance_adapter_import_error_or_construct(monkeypatch):
+    # Either yfinance is installed (construct succeeds) or ImportError raised cleanly.
+    try:
+        adapter = da.YFinanceAdapter()
+        assert hasattr(adapter, "get_equity_ohlcv")
+    except ImportError:
+        pass
+
+
+def test_yfinance_adapter_option_flow_not_implemented():
+    try:
+        adapter = da.YFinanceAdapter()
+    except ImportError:
+        pytest.skip("yfinance not installed in this environment")
+    with pytest.raises(NotImplementedError):
+        adapter.get_option_flow_proxy(["AAPL"], "2024-01-01", "2024-01-05")
+
+
+def test_occ_adapter_stubs_raise():
+    adapter = da.OCCPublicDataAdapter()
+    with pytest.raises(NotImplementedError):
+        adapter.get_equity_ohlcv(["AAPL"], "2024-01-01", "2024-01-05")
+    with pytest.raises(NotImplementedError):
+        adapter.get_option_flow_proxy(["AAPL"], "2024-01-01", "2024-01-05")
+
+
+def test_get_default_adapter_falls_back_to_synthetic():
+    adapter = da.get_default_adapter(prefer_live=False)
+    assert isinstance(adapter, da.SyntheticDataAdapter)
+
+
+def test_get_default_adapter_prefer_live_no_network():
+    # In this sandboxed test environment live network egress to Yahoo is blocked,
+    # so this must gracefully fall back rather than raising.
+    adapter = da.get_default_adapter(prefer_live=True)
+    assert adapter is not None
+
+
+def test_market_data_adapter_protocol_conformance():
+    adapter = da.SyntheticDataAdapter()
+    assert isinstance(adapter, da.MarketDataAdapter)
+
+
+# ---------------------------------------------------------------------------
+# visualization.py
+# ---------------------------------------------------------------------------
+from retail_gamma import visualization as viz
+
+
+def test_plot_small_lot_share_regime(tmp_path):
+    idx = pd.date_range("2019-01-01", periods=50, freq="B")
+    s = pd.Series(np.linspace(0.3, 0.45, 50), index=idx)
+    fig, paths = viz.plot_small_lot_share_regime(s, {"Zero-commission": "2019-10-02"}, tmp_path)
+    assert paths["html"] is not None
+    assert Path(paths["html"]).exists()
+
+
+def test_plot_rolling_ic_regime(tmp_path):
+    idx = pd.date_range("2019-01-01", periods=50, freq="B")
+    s = pd.Series(np.random.default_rng(0).normal(0.02, 0.05, 50), index=idx)
+    fig, paths = viz.plot_rolling_ic_regime(s, {"Regime": "2019-10-02"}, tmp_path)
+    assert Path(paths["html"]).exists()
+
+
+def test_plot_equity_curve_with_benchmark(tmp_path):
+    idx = pd.date_range("2024-01-01", periods=60, freq="B")
+    strat = pd.Series(np.random.default_rng(1).normal(0.0005, 0.01, 60), index=idx)
+    bench = pd.Series(np.random.default_rng(2).normal(0.0002, 0.008, 60), index=idx)
+    fig, paths = viz.plot_equity_curve(strat, bench, tmp_path)
+    assert Path(paths["html"]).exists()
+
+
+def test_plot_equity_curve_no_benchmark_no_drawdown(tmp_path):
+    idx = pd.date_range("2024-01-01", periods=30, freq="B")
+    strat = pd.Series(np.random.default_rng(3).normal(0.0003, 0.01, 30), index=idx)
+    fig, paths = viz.plot_equity_curve(strat, None, tmp_path, drawdown=False, name="eq_no_dd")
+    assert Path(paths["html"]).exists()
+
+
+def test_plot_signal_decay_ribbon(tmp_path):
+    df = pd.DataFrame({
+        "year": [2019]*10 + [2020]*10,
+        "day_of_year": list(range(10)) * 2,
+        "rolling_ic": np.random.default_rng(4).normal(0, 0.05, 20),
+    })
+    fig, paths = viz.plot_signal_decay_ribbon(df, tmp_path)
+    assert Path(paths["html"]).exists()
+
+
+def test_plot_risk_dashboard(tmp_path):
+    idx = pd.date_range("2024-01-01", periods=40, freq="B")
+    df = pd.DataFrame({
+        "rolling_sharpe": np.random.default_rng(5).normal(1, 0.3, 40),
+        "drawdown": -np.abs(np.random.default_rng(6).normal(0, 0.02, 40)),
+        "turnover": np.random.default_rng(7).uniform(0, 0.3, 40),
+        "gross_exposure": np.random.default_rng(8).uniform(0.8, 1.2, 40),
+    }, index=idx)
+    fig, paths = viz.plot_risk_dashboard(df, tmp_path)
+    assert Path(paths["html"]).exists()
+
+
+def test_plot_cpcv_fold_diagnostics(tmp_path):
+    df = pd.DataFrame({"oos_sharpe": np.random.default_rng(9).normal(1, 0.5, 15)})
+    fig, paths = viz.plot_cpcv_fold_diagnostics(df, tmp_path)
+    assert Path(paths["html"]).exists()
+
+
+def test_plot_pbo_histogram(tmp_path):
+    logits = np.random.default_rng(10).normal(0, 1, 200)
+    fig, paths = viz.plot_pbo_histogram(logits, 0.35, tmp_path)
+    assert Path(paths["html"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# validation.py (CPCV, purging/embargo, PBO, Deflated Sharpe)
+# ---------------------------------------------------------------------------
+from retail_gamma import validation as val
+
+
+def test_combinatorial_purged_cv_basic():
+    splits = list(val.combinatorial_purged_cv(n_obs=120, n_groups=6, n_test_groups=2,
+                                               label_horizon=3, embargo_frac=0.01))
+    assert len(splits) > 0
+    for train_idx, test_idx, combo in splits:
+        assert len(test_idx) > 0
+        # purging: no overlap between train and test
+        assert len(np.intersect1d(train_idx, test_idx)) == 0
+
+
+def test_combinatorial_purged_cv_invalid_groups():
+    with pytest.raises(ValueError):
+        list(val.combinatorial_purged_cv(n_obs=100, n_groups=2, n_test_groups=2))
+
+
+def test_combinatorial_purged_cv_insufficient_obs():
+    with pytest.raises(ValueError):
+        list(val.combinatorial_purged_cv(n_obs=3, n_groups=6, n_test_groups=2))
+
+
+def test_run_cpcv_backtest_basic():
+    idx = pd.date_range("2020-01-01", periods=120, freq="B")
+    returns = pd.Series(np.random.default_rng(11).normal(0.0005, 0.01, 120), index=idx)
+    result = val.run_cpcv_backtest(returns, n_groups=6, n_test_groups=2, label_horizon=3)
+    assert not result.empty
+    assert "oos_sharpe" in result.columns
+
+
+def test_run_cpcv_backtest_insufficient_obs():
+    returns = pd.Series(np.random.default_rng(12).normal(0, 0.01, 5))
+    with pytest.raises(ValueError):
+        val.run_cpcv_backtest(returns)
+
+
+def test_probability_of_backtest_overfitting_basic():
+    sharpes = pd.Series(np.random.default_rng(13).normal(1.0, 0.4, 30))
+    pbo, logits = val.probability_of_backtest_overfitting(sharpes, n_trials_simulated=100)
+    assert 0.0 <= pbo <= 1.0
+    assert len(logits) > 0
+
+
+def test_probability_of_backtest_overfitting_insufficient_data():
+    sharpes = pd.Series([1.0, 2.0])
+    pbo, logits = val.probability_of_backtest_overfitting(sharpes)
+    assert np.isnan(pbo)
+    assert len(logits) == 0
+
+
+def test_deflated_sharpe_ratio_basic():
+    dsr = val.deflated_sharpe_ratio(observed_sharpe=1.5, n_trials=10, n_obs=500)
+    assert 0.0 <= dsr <= 1.0
+
+
+def test_deflated_sharpe_ratio_single_trial():
+    dsr = val.deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=1, n_obs=250)
+    assert 0.0 <= dsr <= 1.0
+
+
+def test_deflated_sharpe_ratio_insufficient_obs():
+    dsr = val.deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=5, n_obs=1)
+    assert np.isnan(dsr)
