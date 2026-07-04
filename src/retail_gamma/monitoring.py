@@ -1,4 +1,5 @@
 """Live monitoring: rolling IC/IR, signal decay alerts, KPI artifact generation, Slack hook."""
+
 from __future__ import annotations
 import json
 import os
@@ -9,21 +10,54 @@ import urllib.request
 
 
 def rolling_ic(ic_series: pd.Series, window: int = 63) -> pd.Series:
-    """Rolling mean IC over `window` observations."""
+    """
+    Rolling mean IC over `window` observations.
+
+    Args:
+        ic_series (pd.Series): Series of daily IC values.
+        window (int): Window size for rolling mean calculation. Default is 63.
+
+    Returns:
+        pd.Series: Series of rolling mean IC values.
+    """
     return ic_series.rolling(window, min_periods=max(5, window // 4)).mean()
 
 
 def rolling_ir(daily_returns: pd.Series, window: int = 63) -> pd.Series:
-    """Rolling information ratio (annualized) of a daily net-return series."""
+    """
+    Rolling information ratio (annualized) of a daily net-return series.
+
+    Args:
+        daily_returns (pd.Series): Series of daily net returns.
+        window (int): Window size for rolling mean and std calculation. Default is 63.
+
+    Returns:
+        pd.Series: Series of rolling information ratio values (annualized).
+    """
     mean = daily_returns.rolling(window, min_periods=max(5, window // 4)).mean()
     std = daily_returns.rolling(window, min_periods=max(5, window // 4)).std(ddof=0)
     return (mean / std.replace(0, np.nan)) * np.sqrt(252)
 
 
-def signal_decay_alert(rolling_ic_series: pd.Series, lookback_years: int = 3,
-                        n_consecutive: int = 10) -> bool:
-    """True if the most recent `n_consecutive` rolling-IC obs are all below
-    (historical_mean - 1 std) over the trailing `lookback_years`-scaled window."""
+def signal_decay_alert(
+    rolling_ic_series: pd.Series, lookback_years: int = 3, n_consecutive: int = 10
+) -> bool:
+    """
+    Detects signal decay based on rolling IC series.
+
+    True if the most recent `n_consecutive` rolling-IC obs are all below
+    (historical_mean - 1 std) over the trailing `lookback_years`-scaled window.
+    This function checks if the signal has decayed by comparing the most recent rolling IC values against a threshold derived from historical data.
+
+    Args:
+        rolling_ic_series (pd.Series): Series of rolling IC values.
+        lookback_years (int): Number of years to look back for historical mean and std. Default is
+                              3.
+        n_consecutive (int): Number of consecutive observations below threshold to trigger alert.
+
+    Returns:
+        bool: True if signal decay is detected, False otherwise.
+    """
     hist = rolling_ic_series.dropna()
     if len(hist) < n_consecutive + 5:
         return False
@@ -32,10 +66,26 @@ def signal_decay_alert(rolling_ic_series: pd.Series, lookback_years: int = 3,
     return bool((recent < threshold).all())
 
 
-def build_kpi_report(backtest_df: pd.DataFrame, ic_series: pd.Series | None = None) -> dict:
-    """Assemble a JSON-serializable KPI dict from a backtest results DataFrame.
+def build_kpi_report(
+    backtest_df: pd.DataFrame, ic_series: pd.Series | None = None
+) -> dict:
+    """
+    Assemble a JSON-serializable KPI dict from a backtest results DataFrame.
 
-    backtest_df expects columns: gross_pnl, costs, net_pnl, turnover (indexed by date).
+    Args:
+        backtest_df (pd.DataFrame): DataFrame containing backtest results with columns:
+            - gross_pnl
+            - costs
+            - net_pnl
+            - turnover
+            The DataFrame should be indexed by date.
+        ic_series (pd.Series, optional): Series of daily IC values. Default is None.
+
+    Returns:
+        dict: A dictionary containing various KPIs such as annualized return, volatility, Sharpe
+              ratio, max drawdown, average daily turnover, total costs, final cumulative PnL, mean
+              IC, latest rolling IC, and signal decay alert status. If the backtest DataFrame is
+              empty, returns a dictionary with status "no_data" and n_days 0.
     """
     if backtest_df.empty:
         return {"status": "no_data", "n_days": 0}
@@ -63,13 +113,25 @@ def build_kpi_report(backtest_df: pd.DataFrame, ic_series: pd.Series | None = No
     if ic_series is not None and not ic_series.empty:
         r_ic = rolling_ic(ic_series)
         report["mean_ic"] = float(ic_series.mean())
-        report["latest_rolling_ic"] = float(r_ic.dropna().iloc[-1]) if r_ic.dropna().shape[0] else None
+        report["latest_rolling_ic"] = (
+            float(r_ic.dropna().iloc[-1]) if r_ic.dropna().shape[0] else None
+        )
         report["signal_decay_alert"] = signal_decay_alert(r_ic)
     return report
 
 
 def write_kpi_artifact(report: dict, output_dir: str | Path = "outputs") -> Path:
-    """Write KPI report to outputs/kpi_report.json; returns the path written."""
+    """
+    Write KPI report to outputs/kpi_report.json; returns the path written.
+
+    Args:
+        report (dict): The KPI report dictionary to be written to a JSON file.
+        output_dir (str | Path): The directory where the KPI report will be saved. Default is
+                                 "outputs".
+
+    Returns:
+        Path: The path to the written JSON file.
+    """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "kpi_report.json"
@@ -79,16 +141,25 @@ def write_kpi_artifact(report: dict, output_dir: str | Path = "outputs") -> Path
 
 
 def notify_slack_if_configured(message: str, webhook_url: str | None = None) -> bool:
-    """POST a message to a Slack webhook if configured via arg or SLACK_WEBHOOK_URL env var.
+    """
+    POST a message to a Slack webhook if configured via arg or SLACK_WEBHOOK_URL env var.
 
-    Returns True if a notification was sent, False if skipped (no webhook configured)
-    or on failure (failure is swallowed -- monitoring must never crash the pipeline).
+    Args:
+        message (str): The message to be sent to the Slack webhook.
+        webhook_url (str | None): Optional Slack webhook URL. If not provided, the function will
+                                  attempt to read the SLACK_WEBHOOK_URL environment variable.
+
+    Returns:
+        bool: True if a notification was sent, False if skipped (no webhook configured) or on
+              failure (failure is swallowed -- monitoring must never crash the pipeline).
     """
     url = webhook_url or os.environ.get("SLACK_WEBHOOK_URL")
     if not url:
         return False
     payload = json.dumps({"text": message}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}
+    )
     try:
         urllib.request.urlopen(req, timeout=5)
         return True
@@ -96,15 +167,36 @@ def notify_slack_if_configured(message: str, webhook_url: str | None = None) -> 
         return False
 
 
-def run_monitoring_cycle(backtest_df: pd.DataFrame, ic_series: pd.Series | None = None,
-                          output_dir: str | Path = "outputs",
-                          webhook_url: str | None = None) -> dict:
-    """Full monitoring cycle: build KPI report, write artifact, conditionally Slack-notify."""
+def run_monitoring_cycle(
+    backtest_df: pd.DataFrame,
+    ic_series: pd.Series | None = None,
+    output_dir: str | Path = "outputs",
+    webhook_url: str | None = None,
+) -> dict:
+    """
+    Full monitoring cycle: build KPI report, write artifact, conditionally Slack-notify.
+
+    Args:
+        backtest_df (pd.DataFrame): DataFrame containing backtest results with columns:
+            - gross_pnl
+            - costs
+            - net_pnl
+            - turnover
+            The DataFrame should be indexed by date.
+        ic_series (pd.Series, optional): Series of daily IC values. Default is None.
+        output_dir (str | Path): The directory where the KPI report will be saved. Default is "outputs".
+        webhook_url (str | None): Optional Slack webhook URL. If not provided, the function will attempt to read the SLACK_WEBHOOK_URL environment variable.
+
+    Returns:
+        dict: A dictionary containing the KPI report and Slack notification status.
+    """
     report = build_kpi_report(backtest_df, ic_series)
     write_kpi_artifact(report, output_dir)
     if report.get("signal_decay_alert"):
-        msg = (f"[RFGD ALERT] Signal decay detected: latest rolling IC="
-               f"{report.get('latest_rolling_ic')} below historical threshold.")
+        msg = (
+            f"[RFGD ALERT] Signal decay detected: latest rolling IC="
+            f"{report.get('latest_rolling_ic')} below historical threshold."
+        )
         sent = notify_slack_if_configured(msg, webhook_url)
         report["slack_notified"] = sent
     else:
